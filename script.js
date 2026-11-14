@@ -1,107 +1,49 @@
-// ===== 1. API KEY (Safe: browser లో మార్చు) =====
-let API_KEY = localStorage.getItem('jarvis_key');
-if (!API_KEY) {
-    API_KEY = prompt('Enter your Gemini API Key:');
-    if (API_KEY) localStorage.setItem('jarvis_key', API_KEY);
-}
+// ===== 3. TOOLS (THE HANDS) – 15 TOOLS =====
+async function handleTools(text){
+  const t = text.toLowerCase();
 
-// ===== 2. SMART MODELS (ఒకవేళ fail అయితే next auto try) =====
-const MODELS = ["gemini-1.5-flash", "gemini-1.5-pro"];
+  // 1. Time
+  if(/\btime\b/.test(t)||t.includes('టైమ్')||t.includes('సమయం'))
+    return 'The time is '+new Date().toLocaleTimeString()+', Boss.';
 
-const chat = document.getElementById('chat');
-const input = document.getElementById('msg');
-const micBtn = document.getElementById('mic-btn');
+  // 2. Weather
+  if(t.includes('weather')||t.includes('వాతావరణం')){
+    return await new Promise(res=>{
+      navigator.geolocation.getCurrentPosition(async p=>{
+        try{
+          const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.coords.latitude}&longitude=${p.coords.longitude}&current_weather=true`);
+          const d=await r.json();
+          res(`It is ${d.current_weather.temperature} degrees Celsius now, Boss.`);
+        }catch(e){ res('Weather service error, Boss.'); }
+      }, ()=>res('I need location permission for weather, Boss.'));
+    });
+  }
 
-// ===== 3. GEMINI BRAIN (auto-fallback) =====
-async function callGemini(p) {
-    let lastErr;
-    for (const m of MODELS) {
-        try {
-            const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${API_KEY}`,
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: p }] }] })
-                }
-            );
-            const data = await res.json();
-            if (data.error) {
-                lastErr = new Error(data.error.message);
-                if (/high demand|temporary|quota|rate|unavailable|no longer available|deprecated/i.test(data.error.message)) {
-                    continue;
-                }
-                throw lastErr;
-            }
-            return data.candidates[0].content.parts[0].text;
-        } catch (e) {
-            lastErr = e;
-        }
-    }
-    throw lastErr;
-}
+  // 3. Timer
+  const m=t.match(/(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)/i);
+  if((t.includes('timer')||t.includes('టైమర్'))&&m){
+    const amount=parseInt(m[1]); const unit=m[2].toLowerCase();
+    const factor=/^(hours?|hrs?|h)/.test(unit)?3600000:/^(seconds?|secs?|s)/.test(unit)?1000:60000;
+    const duration=amount*factor;
+    setTimeout(()=>speak(` టైమర్ పూర్తయింది! ${amount} ${unit} అయ్యాయి. `), duration);
+    return `Timer set for ${amount} ${unit}.`;
+  }
 
-async function askGemini(p) {
-    add('J.A.R.V.I.S: Thinking...', 'ai');
-    try {
-        const reply = await callGemini(p);
-        chat.lastChild.innerText = 'J.A.R.V.I.S: ' + reply;
-        speak(reply); // reply వచ్చిన వెంటనే VOICE
-    } catch (e) {
-        chat.lastChild.innerText = 'J.A.R.V.I.S: ERROR - ' + e.message;
-    }
-}
+  // 4. Translate
+  if(t.includes('translate')){
+    const q=text.replace(/translate (this )?/i,'').trim()||'hello';
+    try{
+      const r=await fetch(`https://api.mymemory.translated.net/get?q=`+encodeURIComponent(q)+`&langpair=en|te`);
+      const d=await r.json(); return 'In Telugu: '+d.responseData.translatedText;
+    }catch(e){ return 'Translate error, Boss.'; }
+  }
 
-// ===== 4. SPEECH RECOGNITION (మాట్లాడడం) =====
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-const rec = new SR();
-rec.lang = 'te-IN'; // తెలుగు కోసం te-IN సెట్ చేయబడింది
-rec.onresult = (e) => {
-    const t = e.results[0][0].transcript;
-    add('YOU: ' + t, 'user');
-    askGemini(t);
-};
-micBtn.onclick = () => {
-    rec.start();
-    micBtn.innerText = 'LISTENING...';
-};
-rec.onend = () => {
-    micBtn.innerText = '🎤';
-};
+  // 5. YouTube Play
+  if(t.includes('play ')||t.includes('youtube ')){
+    const q=text.replace(/play |youtube (search )?/i,'').trim();
+    if(q){ window.open('https://www.youtube.com/results?search_query='+encodeURIComponent(q));
+    return 'Searching YouTube for '+q+', Boss.'; }
+  }
 
-// ===== 5. TEXT-TO-SPEECH (మాట్లాడించడం) =====
-let voices = [];
-function loadVoices() {
-    voices = speechSynthesis.getVoices();
-}
-loadVoices();
-speechSynthesis.onvoiceschanged = loadVoices;
-
-function speak(t) {
-    const u = new SpeechSynthesisUtterance(t);
-    u.rate = 1.05;
-    u.pitch = 0.85;
-    
-    // తెలుగు వాయిస్ లేదా ఇంగ్లీష్ వాయిస్ సెలెక్ట్ చేసుకోవడానికి
-    const v = voices.find(v => v.lang.startsWith('te') || v.lang.startsWith('en'));
-    if (v) u.voice = v;
-    
-    speechSynthesis.speak(u);
-}
-
-// ===== 6. TEXT SEND BUTTON =====
-document.getElementById('send').onclick = () => {
-    const t = input.value.trim();
-    if (!t) return;
-    add('YOU: ' + t, 'user');
-    input.value = '';
-    askGemini(t);
-};
-
-function add(t, w) {
-    const d = document.createElement('div');
-    d.className = 'msg ' + w;
-    d.innerText = t;
-    chat.appendChild(d);
-    chat.scrollTop = chat.scrollHeight;
+  return null; // Tool match కాకపోతే Gemini Brain కి వెళ్తుంది
 }
